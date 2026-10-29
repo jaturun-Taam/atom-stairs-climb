@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atom Stairs Climb</title>
+<meta name="description" content="หุ่น DOBOT Atom ก้าวขึ้นบันไดสุ่ม จำลองด้วย MuJoCo ในเบราว์เซอร์">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./lib/three.module.min.js",
+    "three/addons/controls/OrbitControls.js": "./lib/OrbitControls.js",
+    "@mujoco/mujoco": "./lib/mujoco.js"
+  }
+}
+</script>
+<style>
+  :root {
+    --bg: #f3efe8; --panel: rgba(255, 253, 249, 0.94); --ink: #1e1b16; --muted: #6b6358;
+    --line: #e2dbcf; --accent: #c2410c; --accent-ink: #fff; --good: #15803d; --bad: #b91c1c;
+    --chip: #f1ebe1; --sky-top: #d9cbb5; --sky-bottom: #f3efe8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16140f; --panel: rgba(32, 29, 24, 0.94); --ink: #f2ede4; --muted: #a59c8f;
+      --line: #3a352d; --accent: #fb923c; --accent-ink: #1a1306; --good: #4ade80; --bad: #f87171;
+      --chip: #2a261f; --sky-top: #2a2620; --sky-bottom: #16140f;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: "IBM Plex Sans Thai", system-ui, sans-serif; font-size: 14px; }
+  #view { position: fixed; inset: 0; }
+  canvas { display: block; }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+  #panel { position: fixed; top: 16px; left: 16px; width: 340px; max-height: calc(100% - 32px); overflow: auto;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 16px 12px;
+    backdrop-filter: blur(8px); box-shadow: 0 8px 30px rgba(0,0,0,.12); }
+  h1 { font-size: 17px; margin: 0 0 2px; font-weight: 600; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: 12.5px; margin: 0 0 12px; line-height: 1.45; }
+  .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+    padding: 7px 12px; border-radius: 9px; cursor: pointer; font-weight: 500; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; min-width: 92px; }
+  button:disabled { opacity: .5; cursor: default; }
+  label { color: var(--muted); font-size: 12.5px; }
+  input[type=number], select { font: inherit; width: 70px; padding: 5px 6px; border-radius: 7px;
+    border: 1px solid var(--line); background: transparent; color: var(--ink); }
+  select { width: auto; }
+  .grid { display: grid; grid-template-columns: auto 1fr 1fr; gap: 6px 8px; align-items: center; margin: 6px 0 4px; }
+  .grid input { width: 100%; }
+  .sep { height: 1px; background: var(--line); margin: 12px 0; }
+  .check { display: flex; gap: 8px; align-items: flex-start; color: var(--ink); font-size: 13px; margin: 6px 0; cursor: pointer; }
+  .check small { display: block; color: var(--muted); font-size: 12px; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .stat { background: var(--chip); border-radius: 10px; padding: 8px 10px; }
+  .stat b { display: block; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 11.5px; }
+  #status { margin-top: 10px; font-size: 13px; min-height: 20px; }
+  #status.good { color: var(--good); } #status.bad { color: var(--bad); }
+  details { margin-top: 8px; } summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12.5px; }
+  th, td { text-align: right; padding: 3px 4px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; }
+  .foot { color: var(--muted); font-size: 11.5px; line-height: 1.5; margin-top: 12px; }
+  .foot a { color: inherit; }
+  #toggle { display: none; }
+
+  #overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 10;
+    background: var(--bg); transition: opacity .4s; }
+  #overlay.hide { opacity: 0; pointer-events: none; }
+  .card { width: min(440px, calc(100% - 32px)); text-align: center; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 14px 0 8px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  #loadmsg { color: var(--muted); font-size: 13px; }
+  #fallback { display: none; margin-top: 16px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+  @media (max-width: 640px) {
+    #panel { top: auto; bottom: 0; left: 0; right: 0; width: 100%; max-height: 55%; border-radius: 14px 14px 0 0; }
+    #panel.collapsed .body { display: none; }
+    #toggle { display: inline-block; float: right; padding: 3px 9px; }
+  }
+</style>
+</head>
+<body>
+<div id="view"></div>
+
+<aside id="panel">
+  <button id="toggle" aria-label="ย่อ/ขยายแผงควบคุม">▾</button>
+  <h1>DOBOT Atom ขึ้นบันไดสุ่ม</h1>
+  <p class="sub">ฟิสิกส์ MuJoCo รันในเบราว์เซอร์ของคุณ · เดโมแบบมีสายแขวนเสมือนช่วยทรงตัว</p>
+  <div class="body">
+    <div class="row">
+      <button id="play" class="primary">⏸ หยุด</button>
+      <button id="restart">↺ เริ่มใหม่</button>
+      <button id="dice">🎲 บันไดใหม่</button>
+    </div>
+
+    <div class="row">
+      <label for="seed">seed</label><input id="seed" type="number" min="0" max="999999" value="42">
+      <label for="model">รุ่น</label>
+      <select id="model"><option value="p3">Atom P3</option><option value="p2">Atom P2</option></select>
+    </div>
+    <div class="row">
+      <label for="speed">ความเร็ว</label>
+      <select id="speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
+    </div>
+
+    <div class="grid">
+      <span></span><label>ต่ำสุด</label><label>สูงสุด</label>
+      <label>สูงต่อขั้น (ซม.)</label><input id="hmin" type="number" value="10" min="5" max="25"><input id="hmax" type="number" value="20" min="5" max="25">
+      <label>ลึกต่อขั้น (ซม.)</label><input id="dmin" type="number" value="25" min="22" max="50"><input id="dmax" type="number" value="40" min="22" max="50">
+      <label>จำนวนขั้น</label><input id="steps" type="number" value="10" min="3" max="15"><span></span>
+    </div>
+    <div class="row"><button id="apply">สร้างบันไดตามค่านี้</button></div>
+
+    <div class="sep"></div>
+    <label class="check"><input id="harness" type="checkbox" checked>
+      <span>สายแขวนเสมือน<small>ปิดแล้วหุ่นจะล้ม — การทรงตัวจริงต้องได้จาก RL policy</small></span></label>
+    <label class="check"><input id="follow" type="checkbox" checked><span>กล้องตามหุ่น</span></label>
+    <label class="check"><input id="loop" type="checkbox" checked><span>ถึงบนสุดแล้วเริ่มใหม่อัตโนมัติ</span></label>
+
+    <div class="stats">
+      <div class="stat"><b id="sTime" class="mono">0.0 s</b><span>เวลาจำลอง</span></div>
+      <div class="stat"><b id="sStep" class="mono">0 / 10</b><span>ขั้นที่ยืนอยู่</span></div>
+      <div class="stat"><b id="sLift" class="mono">–</b><span>สายแขวนช่วยยก (% น้ำหนักตัว)</span></div>
+      <div class="stat"><b id="sBal" class="mono">–</b><span>สายแขวนช่วยทรงตัว (N · N·m)</span></div>
+    </div>
+    <div id="status"></div>
+
+    <details><summary>ขนาดบันไดแต่ละขั้น</summary><table id="tbl"></table></details>
+
+    <p class="foot">
+      โมเดลหุ่นและค่าควบคุม: <a href="https://github.com/embodied-dobot/atom-locomotion-training" target="_blank" rel="noopener">DOBOT ATOM Learning</a>
+      (โหลดตรงจาก GitHub ของ DOBOT ทุกครั้งที่เปิดหน้า) · ฟิสิกส์: <a href="https://mujoco.org" target="_blank" rel="noopener">MuJoCo</a> ·
+      ลากเมาส์เพื่อหมุนกล้อง, scroll เพื่อซูม
+    </p>
+  </div>
+</aside>
+
+<div id="overlay">
+  <div class="card">
+    <h1>กำลังเตรียมหุ่น Atom</h1>
+    <div class="bar"><i id="bar"></i></div>
+    <div id="loadmsg">โหลดเอนจินฟิสิกส์…</div>
+    <div id="fallback">
+      โหลดโมเดลจาก GitHub ของ DOBOT ไม่สำเร็จ<br>
+      ดาวน์โหลด <a href="https://github.com/embodied-dobot/atom-locomotion-training/archive/refs/heads/main.zip">ZIP ของ repo</a>
+      แล้วแตกไฟล์ จากนั้นเลือกโฟลเดอร์ <b>resources/robots/ATOM</b> ด้านล่าง
+      <div class="row" style="justify-content:center"><input id="folder" type="file" webkitdirectory multiple></div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
